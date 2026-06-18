@@ -52,9 +52,21 @@
               </div>
             </div>
             <div class="mt-2">
+              <small class="text-muted" style="font-size:0.7rem;">JS-Link:</small><br>
               <small class="text-break text-info" style="font-size:0.75rem;">
                 {{ request.host_url }}t/{{ t['token'] }}
               </small>
+            </div>
+            <div class="mt-1">
+              <small class="text-muted" style="font-size:0.7rem;">Pixel (E-Mail):</small><br>
+              <small class="text-break text-warning" style="font-size:0.75rem;">
+                {{ request.host_url }}pixel/{{ t['token'] }}
+              </small>
+              <button class="btn btn-xs btn-outline-warning btn-sm mt-1 w-100"
+                      onclick="copyPixelHtml('{{ request.host_url }}pixel/{{ t[\'token\'] }}')"
+                      title="HTML-Snippet kopieren">
+                <i class="bi bi-code-slash"></i> HTML-Snippet kopieren
+              </button>
             </div>
           </div>
           {% endfor %}
@@ -300,6 +312,14 @@ function showDetail(idx) {
 function copyLink(url) {
   navigator.clipboard.writeText(url).then(() => {
     alert('Link kopiert:\n' + url);
+  });
+}
+
+function copyPixelHtml(pixelUrl) {
+  const snippet = `<img src="${pixelUrl}" width="1" height="1" style="display:none" alt="">`;
+  navigator.clipboard.writeText(snippet).then(() => {
+    alert('HTML-Snippet kopiert!\n\nIn HTML-E-Mail einfügen:\n\n' + snippet +
+          '\n\nTipp: Am Ende des E-Mail-Body einfügen.');
   });
 }
 

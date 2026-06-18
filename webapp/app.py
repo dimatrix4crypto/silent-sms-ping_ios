@@ -6,8 +6,8 @@ import uuid
 from datetime import datetime
 
 import requests
-from flask import (Flask, abort, jsonify, redirect, render_template,
-                   request, url_for)
+from flask import (Flask, abort, jsonify, make_response, redirect,
+                   render_template, request, url_for)
 from PIL import Image
 from PIL.ExifTags import GPSTAGS, TAGS
 
@@ -154,6 +154,7 @@ def beacon(token):
 
 @app.route('/api/collect', methods=['POST'])
 def collect():
+    """JS-Beacon: empfängt Browser-Daten (GPS, Screen, Akku) vom Beacon-Template."""
     data = request.get_json(silent=True) or {}
     token = data.get('token', '')
     ip = get_client_ip()
@@ -178,7 +179,7 @@ def collect():
                 data.get('timezone'),
                 data.get('language'),
                 data.get('battery'),
-                json.dumps(data.get('extra', {})),
+                json.dumps({'method': 'js-beacon', **data.get('extra', {})}),
             ),
         )
     return jsonify({'ok': True})
@@ -198,6 +199,55 @@ def events_api():
                 'SELECT * FROM events ORDER BY timestamp DESC LIMIT 200'
             ).fetchall()
     return jsonify([dict(r) for r in rows])
+
+
+# 1x1 transparent PNG (keine Pillow-Abhängigkeit zur Laufzeit nötig)
+_TRANSPARENT_PNG = (
+    b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
+    b'\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01'
+    b'\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+)
+
+
+def log_event(token, extra=None):
+    """Shared helper: geolocate + persist one tracking event."""
+    ip = get_client_ip()
+    country, city, geo_lat, geo_lon = geolocate_ip(ip)
+    with get_db() as conn:
+        conn.execute(
+            '''INSERT INTO events
+               (token, timestamp, ip, user_agent,
+                geo_country, geo_city, geo_lat, geo_lon,
+                gps_lat, gps_lon, gps_accuracy,
+                screen, timezone, language, battery, extra)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (
+                token,
+                datetime.utcnow().isoformat(),
+                ip,
+                request.headers.get('User-Agent', ''),
+                country, city, geo_lat, geo_lon,
+                None, None, None,
+                None, None, None, None,
+                json.dumps(extra or {}),
+            ),
+        )
+
+
+@app.route('/pixel/<token>')
+def pixel(token):
+    """
+    Invisible 1×1 tracking pixel — kein JavaScript nötig.
+    Einbinden per:  <img src="http://HOST/pixel/TOKEN" width="1" height="1">
+    Funktioniert in HTML-E-Mails, Webseiten, Word-Dokumenten (bei aktivem HTTP).
+    """
+    log_event(token, extra={'method': 'pixel'})
+    resp = make_response(_TRANSPARENT_PNG)
+    resp.headers['Content-Type'] = 'image/png'
+    # Caching verhindern damit jede Öffnung neu geloggt wird
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
 
 
 @app.route('/api/exif', methods=['POST'])
