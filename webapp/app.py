@@ -48,6 +48,32 @@ def init_db():
                 battery      REAL,
                 extra        TEXT
             );
+            CREATE TABLE IF NOT EXISTS messenger_targets (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                label       TEXT,
+                platform    TEXT,
+                identifier  TEXT,
+                created_at  TEXT
+            );
+            CREATE TABLE IF NOT EXISTS status_events (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_id   INTEGER,
+                timestamp   TEXT,
+                status      TEXT,
+                details     TEXT
+            );
+            CREATE TABLE IF NOT EXISTS bot_interactions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp   TEXT,
+                platform    TEXT,
+                user_id     TEXT,
+                username    TEXT,
+                first_name  TEXT,
+                last_name   TEXT,
+                language    TEXT,
+                token       TEXT,
+                extra       TEXT
+            );
         ''')
 
 
@@ -257,6 +283,81 @@ def exif_extract():
     img_bytes = request.files['file'].read()
     coords, gps_tags = extract_gps_from_exif(img_bytes)
     return jsonify({'gps': coords, 'gps_tags': gps_tags})
+
+
+# ---------------------------------------------------------------------------
+# Messenger-Tracking-Routen
+# ---------------------------------------------------------------------------
+
+@app.route('/messenger')
+def messenger():
+    with get_db() as conn:
+        targets = conn.execute(
+            'SELECT * FROM messenger_targets ORDER BY created_at DESC'
+        ).fetchall()
+        status_events = conn.execute(
+            '''SELECT se.*, mt.label, mt.platform, mt.identifier
+               FROM status_events se
+               JOIN messenger_targets mt ON se.target_id = mt.id
+               ORDER BY se.timestamp DESC LIMIT 300'''
+        ).fetchall()
+        interactions = conn.execute(
+            'SELECT * FROM bot_interactions ORDER BY timestamp DESC LIMIT 100'
+        ).fetchall()
+    return render_template(
+        'messenger.html',
+        targets=targets,
+        status_events=status_events,
+        interactions=interactions,
+    )
+
+
+@app.route('/messenger/target', methods=['POST'])
+def add_messenger_target():
+    label      = request.form.get('label', '').strip() or 'Unbenannt'
+    platform   = request.form.get('platform', 'telegram')
+    identifier = request.form.get('identifier', '').strip()
+    if not identifier:
+        return 'Identifier fehlt', 400
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO messenger_targets (label, platform, identifier, created_at) VALUES (?,?,?,?)',
+            (label, platform, identifier, datetime.utcnow().isoformat()),
+        )
+    return redirect(url_for('messenger'))
+
+
+@app.route('/messenger/target/<int:target_id>', methods=['POST'])
+def delete_messenger_target(target_id):
+    with get_db() as conn:
+        conn.execute('DELETE FROM status_events WHERE target_id=?', (target_id,))
+        conn.execute('DELETE FROM messenger_targets WHERE id=?', (target_id,))
+    return redirect(url_for('messenger'))
+
+
+@app.route('/api/messenger/status')
+def api_status_events():
+    target_id = request.args.get('target_id')
+    with get_db() as conn:
+        if target_id:
+            rows = conn.execute(
+                'SELECT * FROM status_events WHERE target_id=? ORDER BY timestamp DESC LIMIT 500',
+                (target_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                'SELECT * FROM status_events ORDER BY timestamp DESC LIMIT 500'
+            ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/messenger/interactions')
+def api_bot_interactions():
+    with get_db() as conn:
+        rows = conn.execute(
+            'SELECT * FROM bot_interactions ORDER BY timestamp DESC LIMIT 200'
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
 
 
 if __name__ == '__main__':

