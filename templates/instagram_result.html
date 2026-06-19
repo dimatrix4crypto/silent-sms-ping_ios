@@ -1,0 +1,279 @@
+{% extends "base.html" %}
+{% block title %}@{{ result.username }} — Instagram OSINT{% endblock %}
+
+{% block content %}
+<ul class="nav nav-tabs mb-4" style="border-color:#30363d;">
+  <li class="nav-item"><a class="nav-link" href="/"><i class="bi bi-crosshair2"></i> IP/GPS Beacon</a></li>
+  <li class="nav-item"><a class="nav-link" href="/messenger"><i class="bi bi-chat-dots"></i> Messenger</a></li>
+  <li class="nav-item"><a class="nav-link" href="/instagram"><i class="bi bi-instagram text-danger"></i> Instagram OSINT</a></li>
+</ul>
+
+{% if row['status'] == 'running' %}
+<div class="alert alert-warning d-flex align-items-center gap-3">
+  <span class="spinner-border spinner-border-sm"></span>
+  <span>Analyse läuft… Seite wird automatisch neu geladen.</span>
+</div>
+<script>setTimeout(() => location.reload(), 4000);</script>
+{% elif result.error %}
+<div class="alert alert-danger"><i class="bi bi-exclamation-triangle"></i> {{ result.error }}</div>
+{% else %}
+
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex align-items-center gap-4">
+      {% if result.profile_pic %}
+      <img src="{{ result.profile_pic }}" width="80" height="80" class="rounded-circle border border-secondary" alt="Profilbild">
+      {% endif %}
+      <div>
+        <h4 class="mb-0">@{{ result.username }}
+          {% if result.is_private %}<span class="badge bg-secondary ms-2">Privat</span>{% endif %}
+        </h4>
+        {% if result.full_name %}<div class="text-muted">{{ result.full_name }}</div>{% endif %}
+        {% if result.bio %}<small class="text-muted">{{ result.bio }}</small>{% endif %}
+      </div>
+      <div class="ms-auto d-flex gap-4 text-center">
+        <div><div class="fs-4 fw-bold text-info">{{ result.post_count }}</div><small class="text-muted">Posts</small></div>
+        <div><div class="fs-4 fw-bold text-warning">{{ result.followers }}</div><small class="text-muted">Follower</small></div>
+        <div><div class="fs-4 fw-bold text-success">{{ result.following }}</div><small class="text-muted">Following</small></div>
+        {% if result.faces_detected %}
+        <div><div class="fs-4 fw-bold text-danger">{{ result.faces_detected }}</div><small class="text-muted">Gesichter</small></div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-5">
+
+    {% if result.probable_location %}
+    {% set pl = result.probable_location %}
+    <div class="card mb-4 border-success">
+      <div class="card-header bg-success bg-opacity-10"><i class="bi bi-crosshair2 text-success"></i> <b>Wahrscheinlicher Aufenthaltsort</b></div>
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div>
+            <span class="fs-5 fw-bold text-success">{{ pl.lat }}, {{ pl.lon }}</span><br>
+            <small class="text-muted">Basierend auf {{ pl.count }} von {{ pl.total_locs }} Standorten</small>
+          </div>
+          <div class="text-end">
+            <span class="badge bg-success fs-6">{{ pl.confidence }}%</span><br>
+            <small class="text-muted">Konfidenz</small>
+          </div>
+        </div>
+        {% if pl.near_places %}
+        <div class="mb-2">
+          <small class="text-muted">Bekannte Orte in diesem Bereich:</small><br>
+          {% for p in pl.near_places %}<span class="badge bg-secondary me-1">{{ p }}</span>{% endfor %}
+        </div>
+        {% endif %}
+        {% if pl.last_seen %}
+        <small class="text-muted"><i class="bi bi-clock"></i> Letzte Aktivität dort: {{ pl.last_seen[:16] | replace('T',' ') }} UTC</small><br>
+        {% endif %}
+        <a href="https://www.google.com/maps?q={{ pl.lat }},{{ pl.lon }}" target="_blank" class="btn btn-sm btn-success mt-2">
+          <i class="bi bi-map"></i> Google Maps
+        </a>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if result.face_matches %}
+    <div class="card mb-4 border-danger">
+      <div class="card-header bg-danger bg-opacity-10">
+        <i class="bi bi-person-bounding-box text-danger"></i>
+        <b>Gesicht erkannt in {{ result.face_matches|length }} fremden Post(s)</b>
+        <small class="text-muted ms-2">(DeepFace / ArcFace)</small>
+      </div>
+      <div class="card-body p-0">
+        <div class="list-group list-group-flush">
+          {% for m in result.face_matches %}
+          <div class="list-group-item" style="background:#161b22;border-color:#30363d;">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <small class="text-muted">{{ m.timestamp[:10] }}</small>
+                {% if m.location %}<br><span class="text-warning"><i class="bi bi-geo-alt"></i> {{ m.location.name }}</span>{% endif %}
+                <br><small class="text-muted">'Ähnlichkeit: {{ ((1 - m.distance) * 100)|int }}%</small>
+              </div>
+              <a href="https://instagram.com/p/{{ m.shortcode }}" target="_blank" class="btn btn-sm btn-outline-danger">
+                <i class="bi bi-box-arrow-up-right"></i> Post
+              </a>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if result.top_locations %}
+    <div class="card mb-4">
+      <div class="card-header"><i class="bi bi-geo-alt text-warning"></i> Häufigste Orte</div>
+      <div class="card-body p-0">
+        <div class="list-group list-group-flush">
+          {% for loc in result.top_locations %}
+          <div class="list-group-item d-flex justify-content-between align-items-center" style="background:#161b22;border-color:#30363d;">
+            <span>{{ loc.name }}</span>
+            <div>
+              <div class="progress" style="width:80px;height:6px;">
+                <div class="progress-bar bg-warning" style="width:{{ (loc.count / result.top_locations[0].count * 100)|int }}%"></div>
+              </div>
+              <small class="text-muted">{{ loc.count }}×</small>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if result.network.tagged_by %}
+    <div class="card mb-4">
+      <div class="card-header"><i class="bi bi-people text-info"></i> Person wurde getaggt von <span class="badge bg-info text-dark ms-1">{{ result.network.tagged_by|length }}</span></div>
+      <div class="card-body p-0">
+        <div class="list-group list-group-flush" style="max-height:250px;overflow-y:auto;">
+          {% for user, data in result.network.tagged_by.items() %}
+          <div class="list-group-item" style="background:#161b22;border-color:#30363d;">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <span class="badge {% if data.relation == 'follower' %}bg-primary{% else %}bg-success{% endif %} me-1">{{ data.relation }}</span>
+                <a href="https://instagram.com/{{ user }}" target="_blank" class="text-info">@{{ user }}</a>
+              </div>
+              <small class="text-muted">{{ data.timestamp[:10] }}</small>
+            </div>
+            {% if data.location %}
+            <small class="text-warning mt-1"><i class="bi bi-geo-alt"></i> {{ data.location.name }} ({{ data.location.lat }}, {{ data.location.lon }})</small>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if result.activity_hours %}
+    <div class="card mb-4">
+      <div class="card-header"><i class="bi bi-clock text-secondary"></i> Aktivitätsmuster (UTC)</div>
+      <div class="card-body pb-2">
+        <canvas id="activityChart" height="80"></canvas>
+        <small class="text-muted d-block text-center mt-1">Posting-Uhrzeit → Rückschluss auf Zeitzone/Tagesrhythmus</small>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if result.top_hashtags %}
+    <div class="card">
+      <div class="card-header"><i class="bi bi-hash text-secondary"></i> Häufigste Hashtags</div>
+      <div class="card-body">
+        {% for tag, cnt in result.top_hashtags.items() %}
+        <span class="badge bg-secondary me-1 mb-1" title="{{ cnt }}×">#{{ tag }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card mb-4">
+      <div class="card-header">
+        <i class="bi bi-map text-info"></i> Standortkarte
+        <span class="badge bg-success ms-1">Eigene Posts</span>
+        <span class="badge bg-warning text-dark ms-1">Von anderen getaggt</span>
+        <span class="badge bg-danger ms-1">Wahrscheinlichster Aufenthalt</span>
+      </div>
+      <div class="card-body p-2"><div id="map" style="height:380px;border-radius:6px;"></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><i class="bi bi-images text-warning"></i> Analysierte Posts <span class="badge bg-secondary ms-1">{{ result.posts|length }}</span></div>
+      <div class="card-body p-0">
+        <div class="table-responsive" style="max-height:400px;overflow-y:auto;">
+          <table class="table table-sm table-hover mb-0">
+            <thead style="background:#1c2128;position:sticky;top:0;">
+              <tr><th>Datum</th><th>Standort</th><th>Likes</th><th>Gesichter</th><th>Tags</th><th></th></tr>
+            </thead>
+            <tbody>
+              {% for p in result.posts %}
+              <tr>
+                <td><small>{{ p.timestamp[:10] }}</small></td>
+                <td>
+                  {% if p.location %}<small class="text-warning"><i class="bi bi-geo-alt"></i> {{ p.location.name }}</small>
+                  {% else %}<span class="text-muted small">—</span>{% endif %}
+                </td>
+                <td><small>{{ p.likes }}</small></td>
+                <td>
+                  {% if p.faces %}<span class="badge bg-secondary">{{ p.faces }} 👤</span>
+                  {% else %}<span class="text-muted small">—</span>{% endif %}
+                </td>
+                <td>
+                  <small class="text-info">
+                    {% for u in p.tagged_users[:2] %}@{{ u }} {% endfor %}
+                    {% if p.tagged_users|length > 2 %}+{{ p.tagged_users|length - 2 }}{% endif %}
+                  </small>
+                </td>
+                <td>
+                  <a href="https://instagram.com/p/{{ p.shortcode }}" target="_blank" class="btn btn-xs btn-outline-secondary btn-sm">
+                    <i class="bi bi-box-arrow-up-right"></i>
+                  </a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+{% if result.activity_hours %}
+new Chart(document.getElementById('activityChart'), {
+  type: 'bar',
+  data: {
+    labels: Array.from({length:24}, (_,i) => i + 'h'),
+    datasets: [{ data: {{ result.activity_hours | tojson }}, backgroundColor: '#388bfd', borderRadius: 3 }]
+  },
+  options: {
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { display: false } },
+      y: { display: false }
+    },
+    animation: false,
+  }
+});
+{% endif %}
+
+const map = L.map('map').setView([20, 10], 2);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 18 }).addTo(map);
+const locs = {{ result.locations | default([]) | tojson }};
+const bounds = [];
+locs.forEach(l => {
+  if (!l.lat || !l.lon) return;
+  const isTagged = (l.source || '').includes('tagged');
+  const color = isTagged ? '#d29922' : '#238636';
+  const label = isTagged ? `Getaggt von @${l.by||'?'}` : 'Eigener Post';
+  L.circleMarker([l.lat, l.lon], { radius:7, color, fillColor:color, fillOpacity:0.85, weight:1 }).addTo(map)
+    .bindPopup(`<b>${l.name||'Unbekannt'}</b><br>${label}<br>${(l.timestamp||'').slice(0,10)}<br><small>${l.lat}, ${l.lon}</small>`);
+  bounds.push([l.lat, l.lon]);
+});
+{% if result.probable_location %}
+const pl = {{ result.probable_location | tojson }};
+L.circleMarker([pl.lat, pl.lon], { radius:14, color:'#f85149', fillColor:'#f85149', fillOpacity:0.4, weight:3 }).addTo(map)
+  .bindPopup(`<b>⚑ Wahrscheinlicher Aufenthalt</b><br>Konfidenz: ${pl.confidence}%<br>Basiert auf ${pl.count} Standorten<br>${pl.near_places.join(', ')}`);
+bounds.push([pl.lat, pl.lon]);
+{% endif %}
+{% if result.all_clusters %}
+{{ result.all_clusters | tojson }}.forEach(c => {
+  if (c.count < 2) return;
+  L.circle([c.lat, c.lon], { radius:5000, color:'#388bfd', fillColor:'#388bfd', fillOpacity:0.08, weight:1 }).addTo(map)
+    .bindPopup(`<b>Cluster (${c.count} Standorte)</b><br>${c.places.join(', ')}`);
+});
+{% endif %}
+if (bounds.length > 0) { try { map.fitBounds(bounds, { padding:[40,40] }); } catch(e) {} }
+</script>
+{% endblock %}
