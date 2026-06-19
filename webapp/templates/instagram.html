@@ -19,7 +19,7 @@
     <div class="card mb-4">
       <div class="card-header"><i class="bi bi-search text-danger"></i> Profil analysieren</div>
       <div class="card-body">
-        <form method="POST" action="/instagram/analyze">
+        <form method="POST" action="/instagram/analyze" enctype="multipart/form-data">
           <div class="mb-3">
             <label class="form-label text-muted small">Instagram @Username</label>
             <div class="input-group">
@@ -46,10 +46,21 @@
             </div>
             <div class="form-check form-switch mt-1">
               <input class="form-check-input" type="checkbox" name="detect_faces"
-                     id="faceCheck">
+                     id="faceCheck" onchange="toggleRefUpload()">
               <label class="form-check-label text-muted small" for="faceCheck">
-                Gesichtserkennung aktivieren (langsamer)
+                Gesichtserkennung aktivieren — DeepFace/ArcFace (langsamer)
               </label>
+            </div>
+            <div id="refUploadBox" class="mt-2 d-none">
+              <label class="form-label text-muted small">
+                Referenzbild (optional) — sonst wird Profilbild genutzt
+              </label>
+              <input type="file" name="reference_image" accept="image/*"
+                     class="form-control form-control-sm">
+              <div class="form-text text-muted" style="font-size:0.75rem;">
+                Eigenes Foto des Targets hochladen für bessere Trefferquote.
+                Ohne Upload: Profilbild wird automatisch als Referenz genutzt.
+              </div>
             </div>
           </div>
           <button type="submit" class="btn btn-danger w-100">
@@ -147,4 +158,13 @@
     {% endif %}
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleRefUpload() {
+  const box = document.getElementById('refUploadBox');
+  box.classList.toggle('d-none', !document.getElementById('faceCheck').checked);
+}
+</script>
 {% endblock %}

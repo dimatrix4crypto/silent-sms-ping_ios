@@ -308,14 +308,26 @@ def instagram_dashboard():
 @app.route('/instagram/analyze', methods=['POST'])
 def instagram_analyze():
     from monitors.instagram_osint import start_analysis
-    username       = request.form.get('username', '').strip().lstrip('@')
-    max_posts      = int(request.form.get('max_posts', 40))
+    import tempfile, os as _os
+    username        = request.form.get('username', '').strip().lstrip('@')
+    max_posts       = int(request.form.get('max_posts', 40))
     analyze_network = request.form.get('analyze_network') == 'on'
-    detect_faces   = request.form.get('detect_faces') == 'on'
+    detect_faces    = request.form.get('detect_faces') == 'on'
     if not username:
         return 'Username fehlt', 400
+
+    # Optionales manuelles Referenzbild
+    ref_path = None
+    ref_file = request.files.get('reference_image')
+    if ref_file and ref_file.filename:
+        fd, ref_path = tempfile.mkstemp(suffix='.jpg')
+        ref_file.save(ref_path)
+        _os.close(fd)
+
     start_analysis(username, max_posts=max_posts,
-                   analyze_network=analyze_network, detect_faces=detect_faces)
+                   analyze_network=analyze_network,
+                   detect_faces=detect_faces,
+                   reference_image_path=ref_path)
     return redirect(url_for('instagram_dashboard'))
 
 

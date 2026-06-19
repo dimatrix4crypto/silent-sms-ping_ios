@@ -6,16 +6,16 @@ Analysiert:
   2. Zeitliche Muster: Wann ist die Person aktiv → Zeitzone / Rhythmus
   3. Soziales Netzwerk: Wer taggt die Person, wen taggt sie → Umfeld
   4. Follower/Following Crossposts: In welchen Fotos taucht die Person auf
-  5. Gesichtserkennung: OpenCV-Detektion in heruntergeladenen Bildern
+  5. Gesichtserkennung: DeepFace-Matching gegen Profilbild des Targets
+     → bestätigt ob Person auf fremden Fotos tatsächlich erscheint
 
 Setup:
-  pip install instaloader opencv-python-headless numpy requests
+  pip install instaloader deepface opencv-python-headless numpy
 
 Für private Profile oder mehr Daten:
   Setze: IG_USERNAME=dein_ig_user  IG_PASSWORD=dein_ig_passwort
 """
 
-import io
 import json
 import logging
 import os
@@ -24,8 +24,8 @@ import tempfile
 import threading
 import urllib.request
 from collections import Counter
-from datetime import datetime, timezone
-from math import radians, sin, cos, sqrt, atan2
+from datetime import datetime
+from math import atan2, cos, radians, sin, sqrt
 
 import cv2
 import instaloader
@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'tracking.db')
 
-# Gesichts-Detektor (Haar Cascade — kein Modell-Download nötig)
+# Haar Cascade als Fallback-Detektor (kein Download nötig)
 _CASCADE_PATH = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
 _face_cascade = cv2.CascadeClassifier(_CASCADE_PATH)
 
@@ -45,7 +45,6 @@ _face_cascade = cv2.CascadeClassifier(_CASCADE_PATH)
 # ---------------------------------------------------------------------------
 
 def _haversine_km(lat1, lon1, lat2, lon2) -> float:
-    """Luftlinienabstand in km zwischen zwei GPS-Punkten."""
     R = 6371.0
     φ1, φ2 = radians(lat1), radians(lat2)
     dφ = radians(lat2 - lat1)
@@ -54,18 +53,24 @@ def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     return R * 2 * atan2(sqrt(a), sqrt(1 - a))
 
 
-def _weighted_center(points: list[dict]) -> dict | None:
-    """Gewichteter Mittelpunkt (häufigere Orte zählen mehr)."""
-    if not points:
+def _download_image_to_tmp(url: str) -> str | None:
+    """Lädt Bild in eine temporäre Datei und gibt den Pfad zurück."""
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = resp.read()
+        suffix = '.jpg'
+        fd, path = tempfile.mkstemp(suffix=suffix)
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data)
+        return path
+    except Exception as e:
+        log.debug('Bild-Download fehlgeschlagen: %s', e)
         return None
-    total = len(points)
-    lat = sum(p['lat'] for p in points) / total
-    lon = sum(p['lon'] for p in points) / total
-    return {'lat': round(lat, 5), 'lon': round(lon, 5)}
 
 
-def _detect_faces_in_url(image_url: str) -> int:
-    """Lädt Bild von URL und gibt Anzahl erkannter Gesichter zurück."""
+def _count_faces_opencv(image_url: str) -> int:
+    """Zählt Gesichter via OpenCV Haar Cascade (kein Matching)."""
     try:
         req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=8) as resp:
@@ -73,10 +78,54 @@ def _detect_faces_in_url(image_url: str) -> int:
         img = cv2.imdecode(data, cv2.IMREAD_GRAYSCALE)
         if img is None:
             return 0
-        faces = _face_cascade.detectMultiScale(img, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+        faces = _face_cascade.detectMultiScale(
+            img, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+        )
         return len(faces)
     except Exception:
         return 0
+
+
+def _recognize_face(reference_path: str, candidate_url: str,
+                    threshold: float = 0.6) -> dict:
+    """
+    Vergleicht ein Gesicht aus candidate_url mit dem Referenzbild.
+
+    Nutzt DeepFace mit dem ArcFace-Modell (höchste Genauigkeit,
+    robust gegen Beleuchtung und Winkel).
+
+    Returns:
+        {'match': bool, 'distance': float, 'faces_found': int}
+    """
+    from deepface import DeepFace
+
+    candidate_path = _download_image_to_tmp(candidate_url)
+    if not candidate_path:
+        return {'match': False, 'distance': None, 'faces_found': 0}
+
+    try:
+        result = DeepFace.verify(
+            img1_path=reference_path,
+            img2_path=candidate_path,
+            model_name='ArcFace',      # genauestes öffentlich verfügbares Modell
+            detector_backend='opencv', # kein zusätzlicher Detector-Download
+            distance_metric='cosine',
+            enforce_detection=False,   # kein Absturz wenn kein Gesicht gefunden
+            silent=True,
+        )
+        return {
+            'match':       result.get('verified', False),
+            'distance':    round(result.get('distance', 1.0), 4),
+            'faces_found': 1,
+        }
+    except Exception as e:
+        log.debug('DeepFace Fehler: %s', e)
+        return {'match': False, 'distance': None, 'faces_found': 0}
+    finally:
+        try:
+            os.unlink(candidate_path)
+        except Exception:
+            pass
 
 
 def _get_loader() -> instaloader.Instaloader:
@@ -106,7 +155,8 @@ def _get_loader() -> instaloader.Instaloader:
 
 def analyze_profile(username: str, max_posts: int = 40,
                     analyze_network: bool = True,
-                    detect_faces: bool = True) -> dict:
+                    detect_faces: bool = True,
+                    reference_image_path: str | None = None) -> dict:
     """
     Vollständige OSINT-Analyse eines Instagram-Profils.
     Gibt ein dict zurück das direkt als JSON in der DB gespeichert wird.
@@ -134,10 +184,20 @@ def analyze_profile(username: str, max_posts: int = 40,
         'locations':   [],
         'network':     {'tagged_by': {}, 'tags_others': {}},
         'faces_detected': 0,
+        'face_matches': [],   # Posts wo Target-Gesicht per DeepFace erkannt wurde
         'activity_hours': [],
         'top_locations': [],
         'probable_location': None,
     }
+
+    # Referenzbild: externes Upload oder automatisch Profilbild laden
+    _ref_path = reference_image_path
+    _ref_cleanup = False
+    if detect_faces and _ref_path is None and profile.profile_pic_url:
+        _ref_path = _download_image_to_tmp(profile.profile_pic_url)
+        _ref_cleanup = True
+        if _ref_path:
+            log.info('Referenzgesicht aus Profilbild geladen: %s', _ref_path)
 
     if profile.is_private:
         result['warning'] = 'Privates Profil — nur öffentliche Metadaten verfügbar'
@@ -180,11 +240,28 @@ def analyze_profile(username: str, max_posts: int = 40,
             result['network']['tags_others'][tagged] = \
                 result['network']['tags_others'].get(tagged, 0) + 1
 
-        # Gesichtserkennung (optional, verlangsamt die Analyse)
+        # Gesichtserkennung
         if detect_faces and post.url:
-            n = _detect_faces_in_url(post.url)
-            post_data['faces'] = n
-            result['faces_detected'] += n
+            if _ref_path:
+                # DeepFace: Matching gegen Referenzbild
+                match_result = _recognize_face(_ref_path, post.url)
+                post_data['faces']       = match_result['faces_found']
+                post_data['face_match']  = match_result['match']
+                post_data['face_dist']   = match_result['distance']
+                result['faces_detected'] += match_result['faces_found']
+                if match_result['match']:
+                    result['face_matches'].append({
+                        'shortcode': post.shortcode,
+                        'timestamp': post_data['timestamp'],
+                        'location':  post_data['location'],
+                        'distance':  match_result['distance'],
+                        'image_url': post.url,
+                    })
+            else:
+                # Fallback: nur zählen (kein Referenzbild verfügbar)
+                n = _count_faces_opencv(post.url)
+                post_data['faces'] = n
+                result['faces_detected'] += n
 
         hour_counts[post.date_utc.hour] += 1
         all_hashtags.update(post.caption_hashtags)
@@ -195,15 +272,23 @@ def analyze_profile(username: str, max_posts: int = 40,
 
     # --- Follower/Following: wer taggt die Zielperson ---
     if analyze_network and not profile.is_private:
-        _analyze_network(L, username, profile, result, max_accounts=20)
+        _analyze_network(L, username, profile, result,
+                         max_accounts=20, ref_path=_ref_path)
 
     # --- Standortauswertung ---
     _compute_location_stats(result)
 
+    # Aufräumen
+    if _ref_cleanup and _ref_path:
+        try:
+            os.unlink(_ref_path)
+        except Exception:
+            pass
+
     return result
 
 
-def _analyze_network(L, username, profile, result, max_accounts=20):
+def _analyze_network(L, username, profile, result, max_accounts=20, ref_path=None):
     """
     Prüft Follower und Following:
     - Lädt ihre neuesten Posts
@@ -220,29 +305,44 @@ def _analyze_network(L, username, profile, result, max_accounts=20):
             checked += 1
             try:
                 for post in acc.get_posts():
-                    if username.lower() in [u.lower() for u in post.tagged_users]:
-                        entry = {
-                            'from_user':  acc.username,
-                            'relation':   rel_type,
-                            'shortcode':  post.shortcode,
-                            'timestamp':  post.date_utc.isoformat(),
-                            'image_url':  post.url,
-                            'location':   None,
+                    # Fund via Tag oder via Gesichtserkennung
+                    tag_match  = username.lower() in [u.lower() for u in post.tagged_users]
+                    face_match = False
+                    face_dist  = None
+
+                    if not tag_match and ref_path and post.url:
+                        fr = _recognize_face(ref_path, post.url)
+                        face_match = fr['match']
+                        face_dist  = fr['distance']
+
+                    if not (tag_match or face_match):
+                        continue
+
+                    entry = {
+                        'from_user':   acc.username,
+                        'relation':    rel_type,
+                        'shortcode':   post.shortcode,
+                        'timestamp':   post.date_utc.isoformat(),
+                        'image_url':   post.url,
+                        'location':    None,
+                        'found_by':    'tag' if tag_match else 'face_recognition',
+                        'face_dist':   face_dist,
+                    }
+                    if post.location and post.location.lat:
+                        entry['location'] = {
+                            'name': post.location.name,
+                            'lat':  round(float(post.location.lat), 5),
+                            'lon':  round(float(post.location.lng), 5),
                         }
-                        if post.location and post.location.lat:
-                            entry['location'] = {
-                                'name': post.location.name,
-                                'lat':  round(float(post.location.lat), 5),
-                                'lon':  round(float(post.location.lng), 5),
-                            }
-                            result['locations'].append({
-                                **entry['location'],
-                                'timestamp': post.date_utc.isoformat(),
-                                'source': f'tagged_by_{rel_type}',
-                                'by': acc.username,
-                            })
-                        result['network']['tagged_by'][acc.username] = entry
-                        break  # pro Account maximal 1 Fund
+                        result['locations'].append({
+                            **entry['location'],
+                            'timestamp': post.date_utc.isoformat(),
+                            'source':    f'found_by_{rel_type}',
+                            'by':        acc.username,
+                            'method':    entry['found_by'],
+                        })
+                    result['network']['tagged_by'][acc.username] = entry
+                    break  # pro Account maximal 1 Fund
             except Exception:
                 pass
 
@@ -320,7 +420,8 @@ def _compute_location_stats(result):
 
 def start_analysis(username: str, max_posts: int = 40,
                    analyze_network: bool = True,
-                   detect_faces: bool = False) -> int:
+                   detect_faces: bool = False,
+                   reference_image_path: str | None = None) -> int:
     """Startet Analyse im Hintergrund-Thread, gibt Analysis-ID zurück."""
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.execute(
@@ -335,11 +436,19 @@ def start_analysis(username: str, max_posts: int = 40,
         try:
             result = analyze_profile(username, max_posts=max_posts,
                                      analyze_network=analyze_network,
-                                     detect_faces=detect_faces)
+                                     detect_faces=detect_faces,
+                                     reference_image_path=reference_image_path)
             status = 'error' if 'error' in result else 'done'
         except Exception as e:
             result = {'error': str(e)}
             status = 'error'
+        finally:
+            # Referenzbild-Temp-Datei aufräumen (falls extern hochgeladen)
+            if reference_image_path:
+                try:
+                    os.unlink(reference_image_path)
+                except Exception:
+                    pass
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute(
                 'UPDATE instagram_analyses SET status=?, result_json=? WHERE id=?',
