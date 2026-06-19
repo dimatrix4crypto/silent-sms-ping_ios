@@ -74,6 +74,13 @@ def init_db():
                 token       TEXT,
                 extra       TEXT
             );
+            CREATE TABLE IF NOT EXISTS instagram_analyses (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                username    TEXT,
+                started_at  TEXT,
+                status      TEXT,
+                result_json TEXT
+            );
         ''')
 
 
@@ -283,6 +290,63 @@ def exif_extract():
     img_bytes = request.files['file'].read()
     coords, gps_tags = extract_gps_from_exif(img_bytes)
     return jsonify({'gps': coords, 'gps_tags': gps_tags})
+
+
+# ---------------------------------------------------------------------------
+# Instagram OSINT-Routen
+# ---------------------------------------------------------------------------
+
+@app.route('/instagram')
+def instagram_dashboard():
+    with get_db() as conn:
+        analyses = conn.execute(
+            'SELECT id, username, started_at, status FROM instagram_analyses ORDER BY started_at DESC'
+        ).fetchall()
+    return render_template('instagram.html', analyses=analyses)
+
+
+@app.route('/instagram/analyze', methods=['POST'])
+def instagram_analyze():
+    from monitors.instagram_osint import start_analysis
+    username       = request.form.get('username', '').strip().lstrip('@')
+    max_posts      = int(request.form.get('max_posts', 40))
+    analyze_network = request.form.get('analyze_network') == 'on'
+    detect_faces   = request.form.get('detect_faces') == 'on'
+    if not username:
+        return 'Username fehlt', 400
+    start_analysis(username, max_posts=max_posts,
+                   analyze_network=analyze_network, detect_faces=detect_faces)
+    return redirect(url_for('instagram_dashboard'))
+
+
+@app.route('/instagram/result/<int:analysis_id>')
+def instagram_result(analysis_id):
+    with get_db() as conn:
+        row = conn.execute(
+            'SELECT * FROM instagram_analyses WHERE id=?', (analysis_id,)
+        ).fetchone()
+    if not row:
+        abort(404)
+    result = json.loads(row['result_json'] or '{}')
+    return render_template('instagram_result.html', row=row, result=result)
+
+
+@app.route('/api/instagram/<int:analysis_id>')
+def instagram_api(analysis_id):
+    with get_db() as conn:
+        row = conn.execute(
+            'SELECT * FROM instagram_analyses WHERE id=?', (analysis_id,)
+        ).fetchone()
+    if not row:
+        abort(404)
+    return jsonify({'status': row['status'], 'result': json.loads(row['result_json'] or '{}')})
+
+
+@app.route('/instagram/delete/<int:analysis_id>', methods=['POST'])
+def instagram_delete(analysis_id):
+    with get_db() as conn:
+        conn.execute('DELETE FROM instagram_analyses WHERE id=?', (analysis_id,))
+    return redirect(url_for('instagram_dashboard'))
 
 
 # ---------------------------------------------------------------------------

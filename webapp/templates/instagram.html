@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Instagram OSINT — TrackOps{% endblock %}
+
+{% block content %}
+<ul class="nav nav-tabs mb-4" style="border-color:#30363d;">
+  <li class="nav-item"><a class="nav-link" href="/">
+    <i class="bi bi-crosshair2"></i> IP/GPS Beacon</a></li>
+  <li class="nav-item"><a class="nav-link" href="/messenger">
+    <i class="bi bi-chat-dots"></i> Messenger</a></li>
+  <li class="nav-item"><a class="nav-link active"
+    style="background:#161b22;border-color:#30363d #30363d #161b22;" href="/instagram">
+    <i class="bi bi-instagram text-danger"></i> Instagram OSINT</a></li>
+</ul>
+
+<div class="row g-4">
+  <div class="col-lg-4">
+
+    <!-- Analyse starten -->
+    <div class="card mb-4">
+      <div class="card-header"><i class="bi bi-search text-danger"></i> Profil analysieren</div>
+      <div class="card-body">
+        <form method="POST" action="/instagram/analyze">
+          <div class="mb-3">
+            <label class="form-label text-muted small">Instagram @Username</label>
+            <div class="input-group">
+              <span class="input-group-text" style="background:#1c2128;border-color:#30363d;">@</span>
+              <input type="text" name="username" class="form-control"
+                     placeholder="username" required>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label text-muted small">Max. Posts analysieren</label>
+            <select name="max_posts" class="form-select">
+              <option value="20">20 Posts (schnell)</option>
+              <option value="40" selected>40 Posts (empfohlen)</option>
+              <option value="80">80 Posts (langsam)</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" name="analyze_network"
+                     id="netCheck" checked>
+              <label class="form-check-label text-muted small" for="netCheck">
+                Follower/Following nach Tags durchsuchen
+              </label>
+            </div>
+            <div class="form-check form-switch mt-1">
+              <input class="form-check-input" type="checkbox" name="detect_faces"
+                     id="faceCheck">
+              <label class="form-check-label text-muted small" for="faceCheck">
+                Gesichtserkennung aktivieren (langsamer)
+              </label>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-danger w-100">
+            <i class="bi bi-play-circle"></i> Analyse starten
+          </button>
+        </form>
+        <div class="alert alert-secondary mt-3 p-2" style="font-size:0.78rem;">
+          <i class="bi bi-info-circle"></i>
+          Für private Profile oder Follower-Analyse:
+          <code>IG_USERNAME</code> + <code>IG_PASSWORD</code> als Umgebungsvariablen setzen.
+        </div>
+      </div>
+    </div>
+
+    <!-- Erklärung -->
+    <div class="card">
+      <div class="card-header"><i class="bi bi-lightbulb text-warning"></i> Was wird analysiert</div>
+      <div class="card-body" style="font-size:0.85rem;">
+        <ul class="text-muted ps-3 mb-0">
+          <li class="mb-1"><b class="text-info">Eigene Posts</b> — Geotagged Standorte, Zeitstempel, Hashtags</li>
+          <li class="mb-1"><b class="text-success">Netzwerk</b> — Follower/Following Posts in denen die Person getaggt ist</li>
+          <li class="mb-1"><b class="text-warning">Cluster-Analyse</b> — Häufigste Aufenthaltsbereiche (5km-Radius)</li>
+          <li class="mb-1"><b class="text-danger">Wahrscheinlicher Aufenthalt</b> — Gewichteter Schwerpunkt aller Standortdaten</li>
+          <li class="mb-1"><b class="text-secondary">Aktivitätsmuster</b> — Stunden-Heatmap → Zeitzone</li>
+          <li><b class="text-secondary">Gesichter</b> — Anzahl erkannter Gesichter pro Post (OpenCV)</li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header">
+        <i class="bi bi-clock-history text-warning"></i> Durchgeführte Analysen
+      </div>
+      <div class="card-body p-0">
+        {% if analyses %}
+        <div class="table-responsive">
+          <table class="table table-hover mb-0">
+            <thead style="background:#1c2128;">
+              <tr><th>Username</th><th>Gestartet</th><th>Status</th><th>Aktion</th></tr>
+            </thead>
+            <tbody>
+              {% for a in analyses %}
+              <tr>
+                <td>
+                  <i class="bi bi-instagram text-danger"></i>
+                  <b>@{{ a['username'] }}</b>
+                </td>
+                <td><small>{{ a['started_at'][:16] | replace('T',' ') }} UTC</small></td>
+                <td>
+                  {% if a['status'] == 'running' %}
+                    <span class="badge bg-warning text-dark">
+                      <span class="spinner-border spinner-border-sm"></span> Läuft…
+                    </span>
+                  {% elif a['status'] == 'done' %}
+                    <span class="badge bg-success">Fertig</span>
+                  {% else %}
+                    <span class="badge bg-danger">Fehler</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <div class="d-flex gap-1">
+                    {% if a['status'] != 'running' %}
+                    <a href="/instagram/result/{{ a['id'] }}"
+                       class="btn btn-sm btn-outline-info">
+                      <i class="bi bi-bar-chart"></i> Ergebnisse
+                    </a>
+                    {% endif %}
+                    <form method="POST" action="/instagram/delete/{{ a['id'] }}"
+                          onsubmit="return confirm('Löschen?')">
+                      <button type="submit" class="btn btn-sm btn-outline-danger">
+                        <i class="bi bi-trash3"></i>
+                      </button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="text-muted text-center p-5">
+          <i class="bi bi-instagram" style="font-size:2rem;"></i><br>
+          Noch keine Analysen. Username eingeben und starten.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if analyses and analyses[0]['status'] == 'running' %}
+    <script>setTimeout(() => location.reload(), 5000);</script>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
