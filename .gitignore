@@ -1,7 +1,5 @@
-*.iml
-.gradle
-/local.properties
-/.idea
-.DS_Store
-/app/build
-/captures
+__pycache__/
+*.pyc
+tracking.db
+wa_profile/
+*.session
